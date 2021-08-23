@@ -878,6 +878,78 @@ class ReorderBroadcastInDimOpAndElementwiseOp
   }
 };
 
+struct UnfuseMHLOFusionOp : public OpRewritePattern<mhlo::FusionOp> {
+ public:
+  using OpRewritePattern<mhlo::FusionOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(mhlo::FusionOp fusion_op,
+                                PatternRewriter &rewriter) const override {
+    SmallVector<Value> inputs;
+    for(auto operand: fusion_op.operands()) {
+      inputs.push_back(operand);
+      //operand.print(llvm::errs()); 
+    }
+    SmallVector<Value> arguments;
+    for(auto argument: fusion_op.fused_computation().front().getArguments()) {
+      arguments.push_back(argument);
+      //argument.print(llvm::errs());
+    }
+    SmallVector<Value> outputs;
+    for(auto result: fusion_op.results()) {
+      outputs.push_back(result);
+      //result.print(llvm::errs());
+    }
+    SmallVector<Value> results;
+    SmallVector<Operation*> ops;
+    for(auto op_iter = fusion_op.fused_computation().op_begin(); op_iter != fusion_op.fused_computation().op_end(); op_iter++) {
+      Operation* op = &*op_iter;
+      ops.push_back(op);
+      if(auto returnOp = llvm::dyn_cast_or_null<mhlo::ReturnOp>(op)) {
+        for(auto result: returnOp.results()) {
+          results.push_back(result);
+        }
+        break;
+      }
+    }
+
+    // llvm::errs() << "\nfunction0:\n";
+    // Block* block = fusion_op.getOperation()->getBlock();
+    // for(auto op_iter = block->begin(); op_iter != block->end(); op_iter++) {
+    //   op_iter->print(llvm::errs());
+    //   llvm::errs()  << "\n";
+    // }
+
+    for(auto input_and_argument: llvm::zip(inputs, arguments)) {
+      Value input = std::get<0>(input_and_argument);
+      Value argument = std::get<1>(input_and_argument);
+      for(OpOperand& use: llvm::make_early_inc_range(argument.getUses())) {
+        use.set(input);
+      }
+    }
+
+    for(auto op: ops) {
+      if(llvm::dyn_cast_or_null<mhlo::ReturnOp>(op)) {
+        op->erase();
+      } else {
+        op->moveBefore(fusion_op.getOperation());
+      }
+    }
+
+    for(auto output_and_result: llvm::zip(outputs, results)) {
+      Value output = std::get<0>(output_and_result);
+      Value result = std::get<1>(output_and_result);
+      for(OpOperand& use: llvm::make_early_inc_range(output.getUses())) {
+        if(use.getOwner()->getBlock() != &fusion_op.fused_computation().front()) {
+          use.set(result);
+        }
+      }
+    }
+    fusion_op.getOperation()->erase();
+
+    return success();
+  }
+};
+
 struct MHLOToMHLOPreprocessingPass
     : public MHLOToMHLOPreprocessingBase<MHLOToMHLOPreprocessingPass> {
   void getDependentDialects(DialectRegistry &registry) const override {
@@ -916,6 +988,9 @@ struct MHLOToMHLOPreprocessingPass
     // dot_general canoncalization patterns.
     mhlo::PopulateGeneralDotOpLoweringPatterns(&patterns, context);
     patterns.insert<RankReducedDotGeneral, TransposeGenericDotGeneral>(context);
+
+    // eliminate mhlo.fusion op
+    patterns.insert<UnfuseMHLOFusionOp>(context);
 
     // Unary elementwise op.
     patterns.insert<

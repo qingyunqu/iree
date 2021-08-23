@@ -340,3 +340,19 @@ func @rng_normal(%arg0: tensor<f32>, %arg1: tensor<f32>) -> tensor<3x5xf32> {
 // CHECK:         %[[SLICE:.+]] = tensor.extract_slice %[[CON]][0] [15] [1] : tensor<16xf32> to tensor<15xf32>
 // CHECK:         %[[RES:.+]] = "mhlo.reshape"(%[[SLICE]]) : (tensor<15xf32>) -> tensor<3x5xf32>
 // CHECK:         return %[[RES]]
+
+// -----
+
+// CHECK: @unfuse(%[[ARG0:.*]]: tensor<4xf32>, %[[ARG1:.*]]: tensor<4xf32>) -> (tensor<4xf32>)
+func @unfuse(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) -> tensor<4xf32> {
+  // CHECK: %[[LOG:.*]] = "mhlo.logistic"(%[[ARG0]]) : (tensor<4xf32>) -> tensor<4xf32>
+  // CHECK: %[[ADD:.*]] = mhlo.add %[[LOG]], %[[ARG1]] : tensor<4xf32>
+  // CHECK: return %[[ADD]] : tensor<4xf32>
+  %0 = "mhlo.fusion"(%arg0, %arg1) ( {
+  ^bb0(%arg2: tensor<4xf32>, %arg3: tensor<4xf32>):  // no predecessors
+    %1 = "mhlo.logistic"(%arg2) : (tensor<4xf32>) -> tensor<4xf32>
+    %2 = mhlo.add %1, %arg3 : tensor<4xf32>
+    "mhlo.return"(%2) : (tensor<4xf32>) -> ()
+  }) {fusion_kind = "kLoop"} : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32>
+  return %0 : tensor<4xf32>
+}
