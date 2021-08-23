@@ -27,6 +27,19 @@ func @wide_add_mul(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>, %arg2: tensor<4xf
     return %2 : tensor<4xf32>
 }
 
+// func @add_and_mul(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>, %arg2: tensor<4xf32>, %arg3: tensor<4xf32>) -> tuple<tensor<4xf32>, tensor<4xf32>> {
+//     %0 = mhlo.add %arg0, %arg1 : tensor<4xf32>
+//     %1 = mhlo.multiply %arg2, %arg3 : tensor<4xf32>
+//     %2 = "mhlo.tuple"(%0, %1) : (tensor<4xf32>, tensor<4xf32>) -> tuple<tensor<4xf32>, tensor<4xf32>>
+//     return %2 : tuple<tensor<4xf32>, tensor<4xf32>>
+// }
+
+func @add_and_mul(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>, %arg2: tensor<4xf32>, %arg3: tensor<4xf32>) -> (tensor<4xf32>, tensor<4xf32>) {
+    %0 = mhlo.add %arg0, %arg1 : tensor<4xf32>
+    %1 = mhlo.multiply %arg2, %arg3 : tensor<4xf32>
+    return %0, %1 : tensor<4xf32>, tensor<4xf32>
+}
+
 func @wide_add(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>, %arg2: tensor<4xf32>, %arg3: tensor<4xf32>) -> tensor<8xf32> {
     %0 = mhlo.add %arg0, %arg1 : tensor<4xf32>
     %1 = mhlo.add %arg2, %arg3 : tensor<4xf32>
@@ -47,12 +60,12 @@ func @matmul_add(%lhs: tensor<64x64xf32>, %rhs: tensor<64x64xf32>, %bias: tensor
     return %2: tensor<64x64xf32>
 }
 
-// func @fusion(%lhs: tensor<4xf32>, %rhs: tensor<4xf32>) -> tensor<4xf32> {
-//     %0 = "mhlo.fusion"(%lhs, %rhs) ( {
-//     ^bb0(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>):  // no predecessors
-//       %1 = "mhlo.logistic"(%lhs) : (tensor<4xf32>) -> tensor<4xf32>
-//       %2= "mhlo.add"(%1, %rhs) : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32>
-//       "mhlo.return"(%2) : (tensor<4xf32>) -> ()
-//     }) {fusion_kind = "kLoop"} : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32>
-//     return %0 : tensor<4xf32>
-// }
+func @fusion(%lhs: tensor<4xf32>, %rhs: tensor<4xf32>) -> tensor<4xf32> {
+    %0 = "mhlo.fusion"(%lhs, %rhs) ( {
+    ^bb0(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>):  // no predecessors
+      %1 = "mhlo.logistic"(%arg0) : (tensor<4xf32>) -> tensor<4xf32>
+      %2= "mhlo.add"(%1, %arg1) : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32>
+      "mhlo.return"(%2) : (tensor<4xf32>) -> ()
+    }) {fusion_kind = "kLoop"} : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32>
+    return %0 : tensor<4xf32>
+}
