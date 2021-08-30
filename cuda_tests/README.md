@@ -20,10 +20,12 @@ iree-translate -iree-input-type=mhlo -iree-mlir-to-vm-bytecode-module -iree-hal-
 ```
 iree-run-module --driver=cuda --module_file=./add.vmfb --entry_function=add --function_input="4xf32=[1 2 3 4]" --function_input="4xf32=[2 2 2 2]"
 ```
-### Generate Linalg Dialect
+### MHLO Dialect -> Linalg Dialect
 ```
 iree-opt -iree-mhlo-input-transformation-pipeline test.mlir -o test.linalg.mlir
 ```
+* `--iree-enable-mhlo-fusion-horizontal-reduction-ops`开启reduce的横向合并
+### Transformation on Linalg Dialect
 * `--iree-flow-fusion-of-tensor-ops`主要实现了linalg tensor上的fusion
 * `--iree-enable-fusion-with-reduction-ops`可以开启reduce上的fusion
 ### Linalg Dialect -> Affine Dialect

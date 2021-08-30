@@ -26,13 +26,12 @@ func @reduce(%arg0: tensor<64x64xf32>) -> tensor<64xf32> {
 
 func @reduce2(%arg0: tensor<392x256xf32>) -> (tensor<392xf32>, tensor<392xf32>) {
     %2 = mhlo.constant dense<0.000000e+00> : tensor<f32>
-    %3 = mhlo.constant dense<0.000000e+00> : tensor<f32>
     %6 = mhlo.multiply %arg0, %arg0 : tensor<392x256xf32>
-    %7:2 = "mhlo.reduce"(%arg0, %6, %2, %3) ( {
+    %7:2 = "mhlo.reduce"(%arg0, %6, %2, %2) ( {
     ^bb0(%arg2: tensor<f32>, %arg3: tensor<f32>, %arg4: tensor<f32>, %arg5: tensor<f32>):  // no predecessors
-      %25 = mhlo.add %arg3, %arg4 : tensor<f32>
-      %26 = mhlo.add %arg2, %arg5 : tensor<f32>
-      "mhlo.return"(%26, %25) : (tensor<f32>, tensor<f32>) -> ()
+      %24 = mhlo.add %arg2, %arg4 : tensor<f32>
+      %25 = mhlo.add %arg3, %arg5 : tensor<f32>
+      "mhlo.return"(%24, %25) : (tensor<f32>, tensor<f32>) -> ()
     }) {dimensions = dense<[1]> : tensor<1xi64>} : (tensor<392x256xf32>, tensor<392x256xf32>, tensor<f32>, tensor<f32>) -> (tensor<392xf32>, tensor<392xf32>)
     return %7#0, %7#1 : tensor<392xf32>, tensor<392xf32>
 }

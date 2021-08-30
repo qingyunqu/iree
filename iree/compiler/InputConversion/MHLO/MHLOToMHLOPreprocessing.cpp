@@ -26,6 +26,11 @@
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+static llvm::cl::opt<bool> clEnableMHLOFusionHorizontalReductionOps(
+    "iree-enable-mhlo-fusion-horizontal-reduction-ops",
+    llvm::cl::desc("Allow fusing mhlo horizontal reductions"),
+    llvm::cl::init(false));
+
 namespace mlir {
 namespace iree_compiler {
 
@@ -885,27 +890,28 @@ struct UnfuseMHLOFusionOp : public OpRewritePattern<mhlo::FusionOp> {
   LogicalResult matchAndRewrite(mhlo::FusionOp fusion_op,
                                 PatternRewriter &rewriter) const override {
     SmallVector<Value> inputs;
-    for(auto operand: fusion_op.operands()) {
+    for (auto operand : fusion_op.operands()) {
       inputs.push_back(operand);
-      //operand.print(llvm::errs()); 
+      // operand.print(llvm::errs());
     }
     SmallVector<Value> arguments;
-    for(auto argument: fusion_op.fused_computation().front().getArguments()) {
+    for (auto argument : fusion_op.fused_computation().front().getArguments()) {
       arguments.push_back(argument);
-      //argument.print(llvm::errs());
+      // argument.print(llvm::errs());
     }
     SmallVector<Value> outputs;
-    for(auto result: fusion_op.results()) {
+    for (auto result : fusion_op.results()) {
       outputs.push_back(result);
-      //result.print(llvm::errs());
+      // result.print(llvm::errs());
     }
     SmallVector<Value> results;
-    SmallVector<Operation*> ops;
-    for(auto op_iter = fusion_op.fused_computation().op_begin(); op_iter != fusion_op.fused_computation().op_end(); op_iter++) {
-      Operation* op = &*op_iter;
+    SmallVector<Operation *> ops;
+    for (auto op_iter = fusion_op.fused_computation().op_begin();
+         op_iter != fusion_op.fused_computation().op_end(); op_iter++) {
+      Operation *op = &*op_iter;
       ops.push_back(op);
-      if(auto returnOp = llvm::dyn_cast_or_null<mhlo::ReturnOp>(op)) {
-        for(auto result: returnOp.results()) {
+      if (auto returnOp = llvm::dyn_cast_or_null<mhlo::ReturnOp>(op)) {
+        for (auto result : returnOp.results()) {
           results.push_back(result);
         }
         break;
@@ -919,32 +925,155 @@ struct UnfuseMHLOFusionOp : public OpRewritePattern<mhlo::FusionOp> {
     //   llvm::errs()  << "\n";
     // }
 
-    for(auto input_and_argument: llvm::zip(inputs, arguments)) {
+    for (auto input_and_argument : llvm::zip(inputs, arguments)) {
       Value input = std::get<0>(input_and_argument);
       Value argument = std::get<1>(input_and_argument);
-      for(OpOperand& use: llvm::make_early_inc_range(argument.getUses())) {
+      for (OpOperand &use : llvm::make_early_inc_range(argument.getUses())) {
         use.set(input);
       }
     }
 
-    for(auto op: ops) {
-      if(llvm::dyn_cast_or_null<mhlo::ReturnOp>(op)) {
+    for (auto op : ops) {
+      if (llvm::dyn_cast_or_null<mhlo::ReturnOp>(op)) {
         op->erase();
       } else {
         op->moveBefore(fusion_op.getOperation());
       }
     }
 
-    for(auto output_and_result: llvm::zip(outputs, results)) {
+    for (auto output_and_result : llvm::zip(outputs, results)) {
       Value output = std::get<0>(output_and_result);
       Value result = std::get<1>(output_and_result);
-      for(OpOperand& use: llvm::make_early_inc_range(output.getUses())) {
-        if(use.getOwner()->getBlock() != &fusion_op.fused_computation().front()) {
+      for (OpOperand &use : llvm::make_early_inc_range(output.getUses())) {
+        if (use.getOwner()->getBlock() !=
+            &fusion_op.fused_computation().front()) {
           use.set(result);
         }
       }
     }
     fusion_op.getOperation()->erase();
+
+    return success();
+  }
+};
+
+mhlo::ReduceOp mergeTwoReduceOp(mhlo::ReduceOp reduce0, mhlo::ReduceOp reduce1,
+                                PatternRewriter &rewriter) {
+  llvm::SmallVector<Value> inputs;
+  for (auto input : reduce0.inputs()) {
+    inputs.push_back(input);
+  }
+  for (auto input : reduce1.inputs()) {
+    inputs.push_back(input);
+  }
+  llvm::SmallVector<Value> init_values;
+  for (auto init_value : reduce0.init_values()) {
+    init_values.push_back(init_value);
+  }
+  for (auto init_value : reduce1.init_values()) {
+    init_values.push_back(init_value);
+  }
+  llvm::SmallVector<Type> output_types;
+  for (auto output_type : reduce0->getResultTypes()) {
+    output_types.push_back(output_type);
+  }
+  for (auto output_type : reduce1->getResultTypes()) {
+    output_types.push_back(output_type);
+  }
+
+  Location loc = rewriter.getFusedLoc({reduce0->getLoc(), reduce1->getLoc()});
+  mhlo::ReduceOp reduce = rewriter.create<mhlo::ReduceOp>(
+      loc, output_types, inputs, init_values, reduce0.dimensions());
+
+  Region &region = reduce.body();
+  region.push_back(new Block);
+  Block &block = region.front();
+  for (int i = 0; i < inputs.size(); i++) {
+    RankedTensorType ty = RankedTensorType::get(
+        {}, inputs[i].getType().dyn_cast<ShapedType>().getElementType());
+    block.addArgument(ty);
+  }
+  for (int i = 0; i < init_values.size(); i++) {
+    RankedTensorType ty = RankedTensorType::get(
+        {}, init_values[i].getType().dyn_cast<ShapedType>().getElementType());
+    block.addArgument(ty);
+  }
+
+  auto first_input_argument = block.args_begin();
+  auto first_init_value_argument = block.args_begin();
+  for (int i = 0; i < inputs.size(); i++) {
+    first_init_value_argument++;
+  }
+  SmallVector<Value> return_values;
+  for (int i = 0; i < inputs.size(); i++) {
+    mhlo::AddOp add = rewriter.create<mhlo::AddOp>(loc, *first_input_argument,
+                                                   *first_init_value_argument);
+    add->moveBefore(&block, block.end());
+    return_values.push_back(add.getResult());
+    first_input_argument++;
+    first_init_value_argument++;
+  }
+  mhlo::ReturnOp return_op =
+      rewriter.create<mhlo::ReturnOp>(loc, return_values);
+  return_op->moveBefore(&block, block.end());
+  return reduce;
+}
+
+struct MHLOFusionHorizontalReductionPass
+    : public OpRewritePattern<mhlo::ReduceOp> {
+ public:
+  using OpRewritePattern<mhlo::ReduceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(mhlo::ReduceOp reduce_op,
+                                PatternRewriter &rewriter) const override {
+    if (!clEnableMHLOFusionHorizontalReductionOps) {
+      return failure();
+    }
+    Operation* mul_op = nullptr;
+    Operation *reduce_op1 = nullptr;
+    Value input = *reduce_op.inputs().begin();
+    for (OpOperand &use : llvm::make_early_inc_range(input.getUses())) {
+      Operation *op = use.getOwner();
+      if (op == reduce_op.getOperation()) {
+        continue;
+      }
+      if (isa<mhlo::MulOp>(op)) {
+        mul_op = op;
+        Value mul_output = op->getResult(0);
+        Operation *op1 = mul_output.getUses().begin()->getOwner();
+        if (isa<mhlo::ReduceOp>(op1) && op1 != reduce_op.getOperation()) {
+          reduce_op1 = op1;
+          break;
+        }
+      }
+    }
+
+    if (!reduce_op1) {
+      return failure();
+    }
+    auto new_reduce_op = mergeTwoReduceOp(
+        reduce_op, llvm::dyn_cast<mhlo::ReduceOp>(reduce_op1), rewriter);
+
+    SmallVector<Value> origin_values;
+    for (auto value : reduce_op->getResults()) {
+      origin_values.push_back(value);
+    }
+    for (auto value : reduce_op1->getResults()) {
+      origin_values.push_back(value);
+    }
+    SmallVector<Value> new_values;
+    for (auto value : new_reduce_op->getResults()) {
+      new_values.push_back(value);
+    }
+    for (auto origin_and_new : llvm::zip(origin_values, new_values)) {
+      Value origin = std::get<0>(origin_and_new);
+      Value new_ = std::get<1>(origin_and_new);
+      for (OpOperand &use : llvm::make_early_inc_range(origin.getUses())) {
+        use.set(new_);
+      }
+    }
+
+    mul_op->moveBefore(new_reduce_op.getOperation());
 
     return success();
   }
@@ -991,6 +1120,8 @@ struct MHLOToMHLOPreprocessingPass
 
     // eliminate mhlo.fusion op
     patterns.insert<UnfuseMHLOFusionOp>(context);
+    // Horizontal reduce fusion
+    patterns.insert<MHLOFusionHorizontalReductionPass>(context);
 
     // Unary elementwise op.
     patterns.insert<
