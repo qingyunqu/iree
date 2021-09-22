@@ -9,11 +9,15 @@ cmake --build ./build/
 * cuda
 * vmvx
 * vulkan-spirv
+* metal-spirv
 * dylib-llvm-aot
+* wasm-llvm-aot
+* rocm
 ### Generate and Run .vmfb with CUDA Backend
 ```
 iree-translate -iree-input-type=mhlo -iree-mlir-to-vm-bytecode-module -iree-hal-target-backends=cuda add.mlir -o add.vmfb
 ```
+* 得到vm ir：`--iree-vm-bytecode-module-output-format=mlir-text`
 * 输入为linalg时设置`-iree-input-type=none`
 * `--iree-cuda-dump-ptx`可以dump出生成的ptx
 * `--print-ir-after-all`可以打印出中间的转换过程
